@@ -1,0 +1,243 @@
+---
+title: "Exploratory Analysis of UFPs (Ultrafine Particles) for mobile monitoring"
+author: "Adithi R. Upadhya - ILK Labs"
+date: "7/11/2020"
+output: 
+  html_document:
+    df_print: paged
+    fig_width: 8
+    fig_height: 6
+    toc: true
+    code_folding: hide
+    css: style_bc.css
+    toc_float: true
+    number_sections: true
+    fig_caption: true
+theme: yeti
+---
+
+
+```{r setup, include = FALSE}
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(ggrepel)
+f <- function(x) {
+  r <- quantile(x, probs = c(0.05, 0.25, 0.5, 0.75, 0.95))
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+completeFun <- function(data, desiredCols) {
+    completeVec <- complete.cases(data[, desiredCols])
+    return(data[completeVec, ])
+  }
+```
+
+
+
+```{r include = FALSE, warning = FALSE, message = FALSE}
+setwd("D:/Dropbox/APMfull/All_Data_CNG_Dsl/Joined_files")
+dir <- "D:/Dropbox/APMfull/All_Data_CNG_Dsl/Joined_files"
+shp_list <- list.files(dir, pattern = "\\.csv$")
+all_data <- data.frame()
+for (each_file in (shp_list)) {
+  df <- read.csv(each_file, header = TRUE, sep = ",")
+  df <- data.frame(df)
+  df$Atmos <- NULL
+  df$file <- stringr::str_extract(each_file, "[0-9]{4}\\_[0-9]{2}\\_[0-9]{2}")
+  start_date <- as.POSIXct(df[1, "date"], format = "%Y-%m-%d %H:%M:%S", 
+                            tz ="Asia/Kolkata")
+  if (is.na(start_date)) {
+    start_date <- as.POSIXct(df$date, format = "%d-%m-%Y %H:%M", 
+                            tz ="Asia/Kolkata")
+    if (is.na(start_date)) {
+      df$date <- as.POSIXct(df$date, format = "%m/%d/%Y %H:%M", 
+                            tz ="Asia/Kolkata")
+    } else {
+      df$date <- as.POSIXct(df$date, format = "%d-%m-%Y %H:%M", 
+                            tz ="Asia/Kolkata")
+    }
+  } else {
+    df$date <- as.POSIXct(df$date, format = "%Y-%m-%d %H:%M:%S", 
+                            tz ="Asia/Kolkata")
+  }
+  df$Area <- substr(each_file, 20, 23)
+  df$Area <- gsub("_", "", df$Area)
+  all_data <- rbind(all_data, df)
+}
+all_data <-completeFun(all_data, c("Latitude"))
+all_data$day <- as.Date(all_data$date, format = '%Y-%m-%d', tz = "Asia/Kolkata")
+all_data$month <- as.Date(all_data$date, format = '%Y-%m-%d', tz = "Asia/Kolkata")
+```
+
+
+# Mobile Monitoring report
+
+**The mobile monitoring campaign started in May 2019 with Diesel car, while the monitoring continued with CNG car from 09 July 2019.**
+
+**All rides are included (CNG + Diesel).**
+
+```{r}
+all_data_summary <- all_data %>%
+  dplyr::select(Particle_conc)
+names(all_data_summary) <- c("UFPs")
+summ <- summary(all_data_summary)
+summ <- data.frame(summ)
+summ$Var1 <- NULL
+names(summ) <- c("Parameter", "Stats")
+summ
+```
+
+
+# Data Availability of UFPs during mobile monitoring campaign (2019 - 2020)
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 1: Data availability of UFPs for all rides"}
+all_data_UFPs <- all_data %>%
+  dplyr::select(day, Particle_conc) %>%
+        group_by(day) %>%
+        summarise_all(funs(mean, sd, median, IQR), na.rm = TRUE)
+names(all_data_UFPs) <- c("date", "UFPs_mean", "UFPs_sd", "UFPs_median", "UFPs_IQR")
+no_na_df <- data.frame(all_data_UFPs$date, all_data_UFPs$UFPs_mean)
+names(no_na_df) <- c("date", "UFPs")
+no_na_df <- no_na_df[complete.cases(no_na_df), ]
+no_na_df$Exp <- "Mobile Monitoring Data"
+y <- ggplot(no_na_df, aes(x = date, y = Exp)) + 
+  geom_errorbarh(aes(xmax = date, xmin = date), size = 0.7, colour = "steelblue") + 
+  labs(x = "", y = "Mobile Monitoring Data") +
+  scale_x_date(date_labels ="%b", date_breaks = "1 month") +
+  theme_classic() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1), 
+        legend.position = "none",
+        strip.background = element_blank(), strip.text = element_blank())
+y
+```
+
+# Monthly Box Plot for Diesel and CNG Car
+
+**The data used here is UFPs which is aggregrated over snapped 30 m road segment and plotted for each month.**
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, fig.cap = "\\label{fig:figs}Fig 2: Monthly box plots of UFPs for all rides"}
+all_data$month <- format(all_data$date, "%Y-%m-01 01:00:00")
+all_data$month <- as.POSIXct(all_data$month, format = '%Y-%m-%d %H:%M:%S', 
+                             tz = "Asia/Kolkata")
+plot_box <- ggplot(all_data, aes(x = reorder(format(all_data$date, '%b'), 
+                                             all_data$date), y = Particle_conc)) + 
+  labs(title = "Monthly box plot", x = "", y = expression(paste(UFPs, "(#", ~ cm^{-3}, ")"))) + geom_rect(data = all_data, aes(xmin = "Jul", xmax = "Jul", ymin = -Inf, ymax = Inf), colour = "red", fill = "red") +
+  stat_summary(fun.data = f, geom ="boxplot", width = 0.7, size = 0.5) +  
+  stat_summary(fun.y = mean, geom = "point", size = 1) +
+  scale_y_continuous(limits = c(0, 500000)) + theme_classic() +
+  theme(legend.text = element_text(size = 14),
+        plot.subtitle = element_text(size = 10, face = "bold"), 
+        axis.title = element_text(size = 18, colour = "black", face = "bold"), 
+        axis.text = element_text(size = 16, colour = "black", face ="bold"),
+        axis.text.x = element_text(size = 14, colour = "black", face = "bold"),
+        panel.border = element_rect(colour = "black", fill = NA, size = 1)) + annotate(geom = "text", label = "Diesel", x = "Jun", y = 450000, size = 6) + annotate(geom = "text", label = "CNG", x = "Aug", y = 450000, size = 6) 
+plot_box
+```
+
+
+# Daily Summary Statistics for Black Carbon
+
+__**Note:Transition from Diesel to CNG on 09 July 2019.**__
+
+```{r fig.align = "center", warning = FALSE, message = FALSE, rows.print = 10}
+all_data_UFPs <- all_data %>%
+  dplyr::select(day, Area, Particle_conc) %>%
+        group_by(day, Area) %>%
+        summarise_all(funs(mean, sd, median, IQR), na.rm = TRUE)
+columns_of_interest <- 3:ncol(all_data_UFPs)
+all_data_UFPs[ , columns_of_interest] <- sapply(X = all_data_UFPs[ , columns_of_interest], FUN = function(x) round(x, digits = 2))
+names(all_data_UFPs) <- c("date", "Area", "UFPs_mean", "UFPs_sd", "UFPs_median", "UFPs_IQR")
+all_data_UFPs
+```
+
+## t-test to check for passes in CNG and Diesel.
+
+**Daily mean calculated using the individual aggregated 30 m road segment data in each area. Here we used the daily mean of UFPs to apply t-test for all the 4 (CBD + Kannur + Malleshwaram 1 + Malleshwaram 2) areas together.**
+
+```{r message = FALSE, warning = FALSE}
+all_data_UFPs_Dsl <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date <= "2019-07-08")
+names(all_data_UFPs_Dsl) <- c("date", "Area", "UFPs_Dsl")
+all_data_UFPs_CNG <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date >= "2019-07-09")
+names(all_data_UFPs_CNG) <- c("date", "Area", "UFPs_CNG")
+t_test <- t.test(all_data_UFPs_CNG$UFPs_CNG, all_data_UFPs_Dsl$UFPs_Dsl)
+t_test
+```
+
+**Here we used the daily mean of UFPs to apply t-test for CBD CNG and Diesel data.**
+
+```{r message = FALSE, warning = FALSE}
+CBD_UFPs_Dsl <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date <= "2019-07-08") %>%
+  filter(Area == "CBD")
+names(CBD_UFPs_Dsl) <- c("date", "Area", "UFPs_Dsl")
+CBD_UFPs_CNG <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date >= "2019-07-09") %>%
+  filter(Area == "CBD")
+names(CBD_UFPs_CNG) <- c("date", "Area", "UFPs_CNG")
+t_test <- t.test(CBD_UFPs_CNG$UFPs_CNG, CBD_UFPs_Dsl$UFPs_Dsl)
+t_test
+```
+
+**Here we used the daily mean of UFPs to apply t-test for Kannuru CNG and Diesel data.**
+
+```{r message = FALSE, warning = FALSE}
+KAN_UFPs_Dsl <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date <= "2019-07-08") %>%
+  filter(Area == "KAN")
+names(KAN_UFPs_Dsl) <- c("date", "Area", "UFPs_Dsl")
+KAN_UFPs_CNG <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date >= "2019-07-09") %>%
+  filter(Area == "KAN")
+names(KAN_UFPs_CNG) <- c("date", "Area", "UFPs_CNG")
+t_test <- t.test(KAN_UFPs_CNG$UFPs_CNG, KAN_UFPs_Dsl$UFPs_Dsl)
+t_test
+```
+
+**Here we used the daily mean of UFPs to apply t-test for Malleshwaram 1 CNG and Diesel data.**
+
+```{r message = FALSE, warning = FALSE}
+MAL1_UFPs_Dsl <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date <= "2019-07-08") %>%
+  filter(Area == "MAL1")
+names(MAL1_UFPs_Dsl) <- c("date", "Area", "UFPs_Dsl")
+MAL1_UFPs_CNG <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date >= "2019-07-09") %>%
+  filter(Area == "MAL1")
+names(MAL1_UFPs_CNG) <- c("date", "Area", "UFPs_CNG")
+t_test <- t.test(MAL1_UFPs_CNG$UFPs_CNG, MAL1_UFPs_Dsl$UFPs_Dsl)
+t_test
+```
+
+**Here we used the daily mean of UFPs to apply t-test for Malleshwaram 2 CNG and Diesel data.**
+
+```{r message = FALSE, warning = FALSE}
+MAL2_UFPs_Dsl <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date <= "2019-07-08") %>%
+  filter(Area == "MAL2")
+names(MAL2_UFPs_Dsl) <- c("date", "Area", "UFPs_Dsl")
+MAL2_UFPs_CNG <- all_data_UFPs %>%
+  dplyr::select(date, Area, UFPs_mean) %>%
+  filter(date >= "2019-07-09") %>%
+  filter(Area == "MAL2")
+names(MAL2_UFPs_CNG) <- c("date", "Area", "UFPs_CNG")
+t_test <- t.test(MAL2_UFPs_CNG$UFPs_CNG, MAL2_UFPs_Dsl$UFPs_Dsl)
+t_test
+```
